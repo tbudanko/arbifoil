@@ -36,7 +36,7 @@ class foil():
         while self.z1[LEindex].imag > 0:
             LEindex += 1
 
-        LEradius = self.getRadius(self.z1[LEindex-1].real, self.z1[LEindex-1].imag, \
+        LEradius = getRadius(self.z1[LEindex-1].real, self.z1[LEindex-1].imag, \
                                   self.z1[LEindex].real, self.z1[LEindex].imag, \
                                   self.z1[LEindex+1].real, self.z1[LEindex+1].imag)
 
@@ -48,9 +48,7 @@ class foil():
         self.z2, self.psi, self.theta =  self.inverseJoukowsky(self.z1)
 
         """Theodorsen mapping"""
-        self.phi, self.eta = self.theodorsen(1)
-
-
+        self.phi, self.eta = self.theodorsen(0.001)
 
     def inverseJoukowsky(self, z1):
         """
@@ -60,10 +58,17 @@ class foil():
         """
 
         z2 = np.empty(len(z1), dtype = complex)
+        z2[0] = 1 + 0j # Trailing edge
 
-        z2[0] = 1 + 0j
+        z2_1 = z1[1]/2 + ((z1[1]/2)**2 - 1)**0.5
+        z2_2 = z1[1]/2 - ((z1[1]/2)**2 - 1)**0.5
 
-        for i in range(1, len(z2)):
+        if z2_1.imag > 0:
+            z2[1] = z2_1
+        else:
+            z2[1] = z2_2
+
+        for i in range(2, len(z2)):
             z2_1 = z1[i]/2 + ((z1[i]/2)**2 - 1)**0.5
             z2_2 = z1[i]/2 - ((z1[i]/2)**2 - 1)**0.5
 
@@ -79,14 +84,16 @@ class foil():
             else:
                 z2[i] = z2_2
 
-
         # Psi and theta arrays are constructed
         # so that the value of psi can be interpolated.
         psi = np.empty(len(z2))
         theta = np.empty(len(z2))
         for i in range(len(z2)):
             psi[i] = np.log(np.abs(z2[i]))
-            theta[i] = self.normAngle(z2[i])
+            if np.angle(z2[i]) < 0:
+                theta[i] = np.angle(z2[i]) + 2*np.pi
+            else:
+                theta[i] = np.angle(z2[i])
 
         return z2, psi, theta
 
@@ -109,20 +116,21 @@ class foil():
         etaOld = np.zeros(nPoints)
         etaNew = np.zeros(nPoints)
 
-        for k in range(2):
+        while res > resTol:
             # Evaluation of integral (VIII) from reference 1.
             # using the method presented in the appendix.
             for i in range(nPoints):
                 for j in range(nPoints):
                     if i==j:
-                        etaNew[i] += 2 * delPhi * self.dPsi(phi[i]-etaOld[i], 1)
+                        etaNew[i] += 2 * delPhi * derivative(self.psi, self.theta, phi[i]-etaOld[i], 1) * (1 - derivative(etaOld, phi, phi[i], 1))
+                        #etaNew[i] += 2 * delPhi * self.dPsi(phi[i]-etaOld[i], 1)
                     else:
                         etaNew[i] += 2 * self.fPsi(phi[j]-etaOld[j]) * \
                                 np.log(np.sin(0.5*(phi[j] + 0.5*delPhi - phi[i]))/np.sin(0.5*(phi[j] - 0.5*delPhi - phi[i])))
                 etaNew[i] *= -1/(2*np.pi)
 
+            res = np.amax(etaNew - etaOld)
             etaOld = etaNew
-
         return phi, etaNew
 
     def fPsi(self, arg):
@@ -130,6 +138,10 @@ class foil():
         Interpolating function
         psi = psi(argument)
         """
+        # Expand arrays to full circle
+        theta = np.append(self.theta, self.theta[0] + 2*np.pi)
+        psi = np.append(self.psi, self.psi[0])
+
         # Normalization of argument
         if arg >= 2*np.pi:
             arg -= 2*np.pi
@@ -138,12 +150,14 @@ class foil():
 
         # Index finding
         i = 0
-        while np.round(arg, decimals = 6) > np.round(self.theta[i], decimals = 6):
+        while np.round(arg, decimals = 6) > np.round(theta[i], decimals = 6):
             i += 1
 
-        f = (arg - self.theta[i-1])/(self.theta[i] - self.theta[i-1])
+        f = (arg - theta[i-1])/(theta[i] - theta[i-1])
 
-        return (1 - f)*self.psi[i-1] + f*self.psi[i]
+        return (1 - f)*psi[i-1] + f*psi[i]
+
+
 
     def dPsi(self, arg, order):
         """
@@ -151,6 +165,10 @@ class foil():
         dpsi^(order) / darg
         """
 
+        # Concatenating to allow periodicity
+        theta = np.concatenate((self.theta, self.theta + 2*np.pi))
+        psi = np.concatenate((self.psi, self.psi))
+
         # Normalization of argument
         if arg >= 2*np.pi:
             arg -= 2*np.pi
@@ -159,16 +177,14 @@ class foil():
 
         # Index finding
         i = 0
-        while np.round(arg, decimals = 6) > np.round(self.theta[i], decimals = 6):
+        while np.round(arg, decimals = 6) > np.round(theta[i], decimals = 6):
             i += 1
-        if abs(self.theta[i]-arg) > abs(self.theta[i-1]-arg):
+
+        if abs(theta[i]-arg) > abs(theta[i-1]-arg):
             i -= 1
 
-        # Concatenating to allow periodicity
-        theta = np.concatenate((self.theta, self.theta + 2*np.pi))
-
         if order == 0:
-            return self.psi[i]
+            return psi[i]
 
         else:
             dPsi2 = self.dPsi(theta[i+1], order-1)
@@ -194,30 +210,49 @@ class foil():
         plt.grid('True')
         plt.show()
 
-    def getRadius(self, x1, y1, x2, y2, x3, y3):
-        """
-        Auxiliary function :
-        Returns local radius of curvature defined by 3 points .
-        """
+def getRadius(x1, y1, x2, y2, x3, y3):
+    """
+    Auxiliary function :
+    Returns local radius of curvature defined by 3 points .
+    """
 
-        A = x1*(y2-y3) - y1*(x2-x3) + x2*y3 - x3*y2
-        B = (x1**2+y1**2)*(y3-y2) + (x2**2+y2**2)*(y1-y3) + (x3**2+y3**2)*(y2-y1)
-        C = (x1**2+y1**2)*(x2-x3) + (x2**2+y2**2)*(x3-x1) + (x3**2+y3**2)*(x1-x2)
-        D = (x1**2+y1**2)*(x3*y2-x2*y3) + (x2**2+y2**2)*(x1*y3-x3*y1) + (x3**2+y3**2)*(x2*y1-x1*y2)
+    A = x1*(y2-y3) - y1*(x2-x3) + x2*y3 - x3*y2
+    B = (x1**2+y1**2)*(y3-y2) + (x2**2+y2**2)*(y1-y3) + (x3**2+y3**2)*(y2-y1)
+    C = (x1**2+y1**2)*(x2-x3) + (x2**2+y2**2)*(x3-x1) + (x3**2+y3**2)*(x1-x2)
+    D = (x1**2+y1**2)*(x3*y2-x2*y3) + (x2**2+y2**2)*(x1*y3-x3*y1) + (x3**2+y3**2)*(x2*y1-x1*y2)
 
-        return sqrt((B**2+C**2-4*A*D)/(4*A**2))
+    return sqrt((B**2+C**2-4*A*D)/(4*A**2))
 
-    def normAngle(self, z):
-        """
-        Auxiliary function :
-        Returns complex argument in range [0,2pi> .
-        """
-        if np.angle(z) < 0:
-            return np.angle(z) + 2*np.pi
-        else:
-            return np.angle(z)
+def derivative(f, t, a, n):
+    """
+    n-th order derivative of f with respect to t at a
+    """
 
+    # Concatenating to allow periodicity
+    t = np.concatenate((t, t + 2*np.pi))
+    f = np.concatenate((f, f))
 
+    # Normalization of aument
+    if a >= 2*np.pi:
+        a -= 2*np.pi
+    elif a < 0:
+        a += 2*np.pi
 
-test = foil('clarky.txt')
+    # Index finding
+    i = 0
+    while np.round(a, decimals = 6) > np.round(t[i], decimals = 6):
+        i += 1
+
+    if abs(t[i]-a) > abs(t[i-1]-a):
+        i -= 1
+
+    if n == 0:
+        return f[i]
+
+    else:
+        derivative2 = derivative(f, t, t[i+1], n-1)
+        derivative1 = derivative(f, t, t[i-1], n-1)
+        return (derivative2 - derivative1)/(t[i+1]-t[i-1])
+
+test = foil('naca6409.txt')
 test.plot()
