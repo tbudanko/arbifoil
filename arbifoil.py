@@ -102,12 +102,11 @@ class foil():
         Theodorsen mapping
         Takes pseudocircle and returns:
         - eta = eta(phi)
-        - psi = psi(phi)
         within specified numerical precision (residual tolerance).
         """
         # Circle discretization
-        nPoints = 100
-        phi = np.linspace(self.theta[0], self.theta[-1], nPoints)
+        nPoints = 500
+        phi = np.linspace(0, 2*np.pi, nPoints, endpoint = False)
         delPhi = phi[1] - phi[0] # Step size
 
         k = 0
@@ -125,12 +124,15 @@ class foil():
                         etaNew[i] += 2 * delPhi * derivative(self.psi, self.theta, phi[i]-etaOld[i], 1) * (1 - derivative(etaOld, phi, phi[i], 1))
                         #etaNew[i] += 2 * delPhi * self.dPsi(phi[i]-etaOld[i], 1)
                     else:
-                        etaNew[i] += 2 * self.fPsi(phi[j]-etaOld[j]) * \
+                        etaNew[i] += 2 * interpolate(self.psi, self.theta, phi[j]-etaOld[j]) * \
                                 np.log(np.sin(0.5*(phi[j] + 0.5*delPhi - phi[i]))/np.sin(0.5*(phi[j] - 0.5*delPhi - phi[i])))
+                        #etaNew[i] += 2 * self.fPsi(phi[j]-etaOld[j]) * \
+                        #        np.log(np.sin(0.5*(phi[j] + 0.5*delPhi - phi[i]))/np.sin(0.5*(phi[j] - 0.5*delPhi - phi[i])))
                 etaNew[i] *= -1/(2*np.pi)
 
             res = np.amax(etaNew - etaOld)
             etaOld = etaNew
+
         return phi, etaNew
 
     def fPsi(self, arg):
@@ -138,10 +140,6 @@ class foil():
         Interpolating function
         psi = psi(argument)
         """
-        # Expand arrays to full circle
-        theta = np.append(self.theta, self.theta[0] + 2*np.pi)
-        psi = np.append(self.psi, self.psi[0])
-
         # Normalization of argument
         if arg >= 2*np.pi:
             arg -= 2*np.pi
@@ -149,15 +147,18 @@ class foil():
             arg += 2*np.pi
 
         # Index finding
-        i = 0
-        while np.round(arg, decimals = 6) > np.round(theta[i], decimals = 6):
-            i += 1
+        if arg > theta[-1] or arg < theta[0]:
+            f = (arg - theta[-1])/(theta[0] + 2*np.pi - theta[-1])
+            return (1 - f)*psi[-1] + f*psi[0]
+        else:
+            i = 0
+            while np.round(arg, decimals = 6) > np.round(theta[i], decimals = 6):
+                i += 1
+                if i == len(theta):
+                    break
 
-        f = (arg - theta[i-1])/(theta[i] - theta[i-1])
-
-        return (1 - f)*psi[i-1] + f*psi[i]
-
-
+            f = (arg - theta[i-1])/(theta[i] - theta[i-1])
+            return (1 - f)*psi[i-1] + f*psi[i]
 
     def dPsi(self, arg, order):
         """
@@ -213,7 +214,8 @@ class foil():
 def getRadius(x1, y1, x2, y2, x3, y3):
     """
     Auxiliary function :
-    Returns local radius of curvature defined by 3 points .
+    Returns local radius of curvature defined by 3 points.
+    Used for calculating leading edge radius.
     """
 
     A = x1*(y2-y3) - y1*(x2-x3) + x2*y3 - x3*y2
@@ -223,15 +225,11 @@ def getRadius(x1, y1, x2, y2, x3, y3):
 
     return sqrt((B**2+C**2-4*A*D)/(4*A**2))
 
-def derivative(f, t, a, n):
+def interpolate(f, t, a):
     """
-    n-th order derivative of f with respect to t at a
+    Interpolating function
+    f = f(t) in t = a
     """
-
-    # Concatenating to allow periodicity
-    t = np.concatenate((t, t + 2*np.pi))
-    f = np.concatenate((f, f))
-
     # Normalization of aument
     if a >= 2*np.pi:
         a -= 2*np.pi
@@ -239,9 +237,39 @@ def derivative(f, t, a, n):
         a += 2*np.pi
 
     # Index finding
-    i = 0
-    while np.round(a, decimals = 6) > np.round(t[i], decimals = 6):
-        i += 1
+    if a > t[-1] or a < t[0]:
+        frac = (a - t[-1])/(t[0] + 2*np.pi - t[-1])
+        return (1 - frac)*f[-1] + frac*f[0]
+    else:
+        i = 0
+        while np.round(a, decimals = 6) > np.round(t[i], decimals = 6):
+            i += 1
+            if i == len(t):
+                break
+
+        frac = (a - t[i-1])/(t[i] - t[i-1])
+        return (1 - frac)*f[i-1] + frac*f[i]
+
+def derivative(f, t, a, n):
+    """
+    n-th order derivative of f with respect to t at a
+    """
+    # Normalization of argument a
+    if a >= 2*np.pi:
+        a -= 2*np.pi
+    elif a < 0:
+        a += 2*np.pi
+
+    # Index finding
+    if a > t[-1] or a < t[0]:
+        frac = (a - t[-1])/(t[0] + 2*np.pi - t[-1])
+        return (1 - frac)*f[-1] + frac*f[0]
+    else:
+        i = 0
+        while np.round(a, decimals = 6) > np.round(t[i], decimals = 6):
+            i += 1
+            if i == len(t):
+                break
 
     if abs(t[i]-a) > abs(t[i-1]-a):
         i -= 1
@@ -250,9 +278,18 @@ def derivative(f, t, a, n):
         return f[i]
 
     else:
-        derivative2 = derivative(f, t, t[i+1], n-1)
-        derivative1 = derivative(f, t, t[i-1], n-1)
-        return (derivative2 - derivative1)/(t[i+1]-t[i-1])
+        if i == len(t)-1:
+            derivative2 = derivative(f, t, t[0], n-1)
+            derivative1 = derivative(f, t, t[i-1], n-1)
+            return (derivative2 - derivative1)/(2*np.pi+t[0]-t[i-1])
+        elif i == 0:
+            derivative2 = derivative(f, t, t[i+1], n-1)
+            derivative1 = derivative(f, t, t[i-1], n-1)
+            return (derivative2 - derivative1)/(t[i+1]-t[i-1] + 2*np.pi)
+        else:
+            derivative2 = derivative(f, t, t[i+1], n-1)
+            derivative1 = derivative(f, t, t[i-1], n-1)
+            return (derivative2 - derivative1)/(t[i+1]-t[i-1])
 
-test = foil('naca6409.txt')
+test = foil('clarky.txt')
 test.plot()
