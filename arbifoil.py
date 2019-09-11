@@ -50,6 +50,24 @@ class foil():
         """Theodorsen mapping"""
         self.phi, self.eta = self.theodorsen(0.001)
 
+        self.psi = np.array([interpolate(self.psi, self.theta, self.phi[i] - self.eta[i]) for i in range(len(self.phi))])
+        self.theta = self.phi - self.eta
+        self.z2 = np.exp(self.psi)*(np.cos(self.theta)+1j*np.sin(self.theta))
+
+        # Average exponential scaling factor
+        self.psi0 = 1/2/np.pi*trapz(np.array([interpolate(self.psi, self.theta, self.phi[i]) for i in range(len(self.phi))]),self.phi)
+
+        """Joukowsky mapping"""
+        self.z1 = self.z2 + 1/self.z2
+
+        # Velocity factor array as function of theta
+        self.F = np.array([(1+derivative(self.eta,self.theta,self.theta[i],1))*np.exp(self.psi0)/\
+                            np.sqrt((self.z1[i].imag/2/np.sin(self.theta[i]))**2 + (np.sin(self.theta[i]))**2)/\
+                            1 + (derivative(self.psi,self.theta,self.theta[i],1))**2])
+
+
+
+
     def inverseJoukowsky(self, z1):
         """
         Inverse Joukowsky mapping
@@ -58,7 +76,7 @@ class foil():
         """
 
         z2 = np.empty(len(z1), dtype = complex)
-        z2[0] = 1 + 0j # Trailing edge
+        z2[0] = 1 # Trailing edge
 
         z2_1 = z1[1]/2 + ((z1[1]/2)**2 - 1)**0.5
         z2_2 = z1[1]/2 - ((z1[1]/2)**2 - 1)**0.5
@@ -105,12 +123,11 @@ class foil():
         within specified numerical precision (residual tolerance).
         """
         # Circle discretization
-        nPoints = 500
+        nPoints = 100
         phi = np.linspace(0, 2*np.pi, nPoints, endpoint = False)
         delPhi = phi[1] - phi[0] # Step size
 
-        k = 0
-        res = 1
+        res = 1 # Initial residual
 
         etaOld = np.zeros(nPoints)
         etaNew = np.zeros(nPoints)
@@ -291,5 +308,5 @@ def derivative(f, t, a, n):
             derivative1 = derivative(f, t, t[i-1], n-1)
             return (derivative2 - derivative1)/(t[i+1]-t[i-1])
 
-test = foil('clarky.txt')
+test = foil('naca2414.txt')
 test.plot()
