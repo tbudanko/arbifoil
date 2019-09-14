@@ -1,5 +1,7 @@
 """
-ARBIFOIL
+      ARBIFOIL
+
+Author: Toma Budanko
 """
 
 import numpy as np
@@ -32,6 +34,7 @@ class foil():
             coordinates = datPoints[i].split()
             self.z1[i] = float(coordinates[0]) + float(coordinates[1])*1j
 
+
         LEindex = 1
         while self.z1[LEindex].imag > 0:
             LEindex += 1
@@ -42,7 +45,9 @@ class foil():
 
         self.z1 = 4/(1-0.5*LEradius)*self.z1
         self.z1 = self.z1 - self.z1[0].real + 2
+        self.z1[0] = 2 + 0*1j
 
+        self.chord = 2 - self.z1[LEindex].real
 
         """ z2 - pseudocircle complex plane """
         self.z2, self.psi, self.theta =  self.inverseJoukowsky(self.z1)
@@ -65,8 +70,15 @@ class foil():
                             np.sqrt((self.z1[i].imag/2/np.sin(self.theta[i]))**2 + (np.sin(self.theta[i]))**2)/\
                             1 + (derivative(self.psi,self.theta,self.theta[i],1))**2])
 
+        # eta_t AoA at zero lift -> phi(theta=0)
+        self.eta_t = interpolate(self.eta, self.theta, 0) # + theta_t = 0
 
-
+    def cl(self, aoa):
+        """
+        Lift coefficient at specified AoA
+        """
+        aoa = aoa/180*np.pi
+        return 8/self.chord*np.pi*np.exp(self.psi0)*np.sin(aoa-self.eta_t)
 
     def inverseJoukowsky(self, z1):
         """
@@ -76,7 +88,7 @@ class foil():
         """
 
         z2 = np.empty(len(z1), dtype = complex)
-        z2[0] = 1 # Trailing edge
+        z2[0] = 1 + 0*1j # Trailing edge
 
         z2_1 = z1[1]/2 + ((z1[1]/2)**2 - 1)**0.5
         z2_2 = z1[1]/2 - ((z1[1]/2)**2 - 1)**0.5
@@ -215,8 +227,8 @@ class foil():
         """
 
         plt.figure()
-        plt.plot(self.z1.real, self.z1.imag, 'b')
-        plt.plot(self.z2.real, self.z2.imag, 'r')
+        plt.plot(np.append(self.z1.real,self.z1[0].real), np.append(self.z1.imag,self.z1[0].imag), 'b')
+        plt.plot(np.append(self.z2.real,self.z2[0].real), np.append(self.z2.imag,self.z2[0].imag), 'r')
         plt.gca().set_aspect('equal')
         plt.grid('True')
         plt.figure()
@@ -224,7 +236,7 @@ class foil():
         plt.plot(self.theta, self.psi, 'k')
         plt.grid('True')
         plt.subplot(212)
-        plt.plot(self.phi-self.eta, self.eta, 'r')
+        plt.plot(self.theta, self.eta, 'r')
         plt.grid('True')
         plt.show()
 
@@ -248,15 +260,15 @@ def interpolate(f, t, a):
     f = f(t) in t = a
     """
     # Normalization of aument
-    if a >= 2*np.pi:
-        a -= 2*np.pi
-    elif a < 0:
-        a += 2*np.pi
+    a = redArg(a)
 
     # Index finding
-    if a > t[-1] or a < t[0]:
+    if a > t[-1]:
         frac = (a - t[-1])/(t[0] + 2*np.pi - t[-1])
-        return (1 - frac)*f[-1] + frac*f[0]
+        return (1 - frac)*f[-1] + frac*(f[0])
+    elif a < t[0]:
+        frac = (a + 2*np.pi - t[-1])/(t[0] + 2*np.pi - t[-1])
+        return (1 - frac)*f[-1] + frac*(f[0])
     else:
         i = 0
         while np.round(a, decimals = 6) > np.round(t[i], decimals = 6):
@@ -272,10 +284,7 @@ def derivative(f, t, a, n):
     n-th order derivative of f with respect to t at a
     """
     # Normalization of argument a
-    if a >= 2*np.pi:
-        a -= 2*np.pi
-    elif a < 0:
-        a += 2*np.pi
+    a = redArg(a)
 
     # Index finding
     if a > t[-1] or a < t[0]:
@@ -308,5 +317,13 @@ def derivative(f, t, a, n):
             derivative1 = derivative(f, t, t[i-1], n-1)
             return (derivative2 - derivative1)/(t[i+1]-t[i-1])
 
-test = foil('naca2414.txt')
+def redArg(a):
+    """Reduces argument to [0,2pi] interval"""
+    if a >= 2*np.pi:
+        a -= 2*np.pi
+    elif a < 0:
+        a += 2*np.pi
+    return a
+
+test = foil('clarky.txt')
 test.plot()
