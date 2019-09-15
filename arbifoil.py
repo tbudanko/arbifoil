@@ -43,24 +43,39 @@ class foil():
                                   self.z1[LEindex].real, self.z1[LEindex].imag, \
                                   self.z1[LEindex+1].real, self.z1[LEindex+1].imag)
 
+        self.LEindex = LEindex
+
         self.z1 = 4/(1-0.5*LEradius)*self.z1
         self.z1 = self.z1 - self.z1[0].real + 2
         self.z1[0] = 2 + 0*1j
 
-        self.chord = 2 - self.z1[LEindex].real
+        self.chord = 2 - self.z1[self.LEindex].real
 
         """ z2 - pseudocircle complex plane """
         self.z2, self.psi, self.theta =  self.inverseJoukowsky(self.z1)
 
         """Theodorsen mapping"""
         self.phi, self.eta = self.theodorsen(0.001)
+        self.eta[-1] = self.eta[0]
 
         self.psi = np.array([interpolate(self.psi, self.theta, self.phi[i] - self.eta[i]) for i in range(len(self.phi))])
         self.theta = self.phi - self.eta
         self.z2 = np.exp(self.psi)*(np.cos(self.theta)+1j*np.sin(self.theta))
 
         # Average exponential scaling factor
-        self.psi0 = 1/2/np.pi*trapz(np.array([interpolate(self.psi, self.theta, self.phi[i]) for i in range(len(self.phi))]),self.phi)
+        self.psi0 = 1/2/np.pi*trapz(np.array([interpolate(self.psi, self.theta, self.theta[i]) for i in range(len(self.phi))]), self.phi)
+
+        # Mapping coefficients
+        self.A = np.array([])
+        self.B = np.array([])
+
+        A1 = 1/np.pi*trapz(np.array([interpolate(self.psi, self.theta, self.theta[i]) * np.cos(self.phi[i]) for i in range(len(self.phi))]), self.phi)
+        self.A = np.append(self.A, A1)
+
+        B1 = 1/np.pi*trapz(np.array([interpolate(self.psi, self.theta, self.theta[i]) * np.sin(self.phi[i]) for i in range(len(self.phi))]), self.phi)
+        self.B = np.append(self.B, B1)
+
+        self.c1 = self.A[0] + self.B[0]*1j
 
         """Joukowsky mapping"""
         self.z1 = self.z2 + 1/self.z2
@@ -72,6 +87,8 @@ class foil():
 
         # eta_t AoA at zero lift -> phi(theta=0)
         self.eta_t = interpolate(self.eta, self.theta, 0) # + theta_t = 0
+
+        """"""
 
     def cl(self, aoa):
         """
@@ -136,7 +153,7 @@ class foil():
         """
         # Circle discretization
         nPoints = 100
-        phi = np.linspace(0, 2*np.pi, nPoints, endpoint = False)
+        phi = np.linspace(0, 2*np.pi, nPoints, endpoint = True)
         delPhi = phi[1] - phi[0] # Step size
 
         res = 1 # Initial residual
@@ -147,8 +164,8 @@ class foil():
         while res > resTol:
             # Evaluation of integral (VIII) from reference 1.
             # using the method presented in the appendix.
-            for i in range(nPoints):
-                for j in range(nPoints):
+            for i in range(nPoints-1):
+                for j in range(nPoints-1):
                     if i==j:
                         etaNew[i] += 2 * delPhi * derivative(self.psi, self.theta, phi[i]-etaOld[i], 1) * (1 - derivative(etaOld, phi, phi[i], 1))
                         #etaNew[i] += 2 * delPhi * self.dPsi(phi[i]-etaOld[i], 1)
@@ -326,4 +343,4 @@ def redArg(a):
     return a
 
 test = foil('clarky.txt')
-test.plot()
+print(test.c1)
