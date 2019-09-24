@@ -56,39 +56,63 @@ class foil():
 
         """Theodorsen mapping"""
         self.phi, self.eta = self.theodorsen(0.001)
-        self.eta[-1] = self.eta[0]
 
+        # Psi, theta, z2 and z1 arrays are recomputed to correspond
+        # element-wise to the phi and eta arrays.
         self.psi = np.array([interpolate(self.psi, self.theta, self.phi[i] - self.eta[i]) for i in range(len(self.phi))])
         self.theta = self.phi - self.eta
         self.z2 = np.exp(self.psi)*(np.cos(self.theta)+1j*np.sin(self.theta))
 
+        # Phi and Psi arrays with repeated first values to close the unit circle
+        # for integration using trapezoidal rule.
+        phi_temp = np.append(self.phi, self.phi[0]+2*np.pi)
+        psi_temp = np.append(self.psi, self.psi[0])
+
+
         # Average exponential scaling factor
-        self.psi0 = 1/2/np.pi*trapz(np.array([interpolate(self.psi, self.theta, self.theta[i]) for i in range(len(self.phi))]), self.phi)
+        self.psi0 = 1/2/np.pi*trapz(psi_temp, phi_temp)
 
-        # Mapping coefficients
-        self.A = np.array([])
-        self.B = np.array([])
+        # Mapping coefficients of the combined Theodorsen-Joukowsky map
+        nCoeffs = 10 # Number of c coefficients
+        self.c = np.empty(nCoeffs + 1, dtype = complex)
+        self.a = np.empty(nCoeffs, dtype = complex)
+        k      = np.zeros(nCoeffs + 2, dtype = complex)
+        k[0]   = 1 # k_0 = 1
 
-        A1 = 1/np.pi*trapz(np.array([interpolate(self.psi, self.theta, self.theta[i]) * np.cos(self.phi[i]) for i in range(len(self.phi))]), self.phi)
-        self.A = np.append(self.A, A1)
+        for n in range(nCoeffs+1):
+            A = np.exp(self.psi0)**(n+1)/np.pi*trapz(np.array([psi_temp[i] * np.cos((n+1)*phi_temp[i]) for i in range(len(phi_temp))]), phi_temp)
+            B = np.exp(self.psi0)**(n+1)/np.pi*trapz(np.array([psi_temp[i] * np.sin((n+1)*phi_temp[i]) for i in range(len(phi_temp))]), phi_temp)
+            self.c[n] = A + B*1j
 
-        B1 = 1/np.pi*trapz(np.array([interpolate(self.psi, self.theta, self.theta[i]) * np.sin(self.phi[i]) for i in range(len(self.phi))]), self.phi)
-        self.B = np.append(self.B, B1)
+            k[n+1] = sum([k[n-o]*self.c[o]*(o+1)/(n+1) for o in range(n+1)])
 
-        self.c1 = self.A[0] + self.B[0]*1j
+        for n in range(nCoeffs):
+            self.a[n] = k[n+2] - k[n]
 
-        """Joukowsky mapping"""
-        self.z1 = self.z2 + 1/self.z2
+        # Testing the combined mapping
+        z3_test = np.exp(self.psi0)*(np.cos(self.phi)+1j*np.sin(self.phi))
 
-        # Velocity factor array as function of theta
-        self.F = np.array([(1+derivative(self.eta,self.theta,self.theta[i],1))*np.exp(self.psi0)/\
+        z1_test = self.c[0] + z3_test
+        for n in range(nCoeffs):
+            z1_test +=  self.a[n]/(z3_test)**(n+1)
+
+        plt.figure()
+        plt.plot(np.append(z1_test.real,z1_test[0].real), np.append(z1_test.imag,z1_test[0].imag), 'b')
+        plt.plot(np.append(z3_test.real,z3_test[0].real), np.append(z3_test.imag,z3_test[0].imag), 'r')
+        plt.gca().set_aspect('equal')
+        plt.grid('True')
+        plt.show()
+
+
+        # Velocity factor array at all points of theta array
+        self.F = np.array([(1+derivative(self.eta,self.phi,self.phi[i],1))*np.exp(self.psi0)/\
                             np.sqrt((self.z1[i].imag/2/np.sin(self.theta[i]))**2 + (np.sin(self.theta[i]))**2)/\
                             1 + (derivative(self.psi,self.theta,self.theta[i],1))**2])
 
-        # eta_t AoA at zero lift -> phi(theta=0)
+        # eta_t - angle of attack at zero lift -> phi(theta=0)
         self.eta_t = interpolate(self.eta, self.theta, 0) # + theta_t = 0
 
-        """"""
+
 
     def cl(self, aoa):
         """
@@ -96,6 +120,23 @@ class foil():
         """
         aoa = aoa/180*np.pi
         return 8/self.chord*np.pi*np.exp(self.psi0)*np.sin(aoa-self.eta_t)
+
+    def CoP(self, aoa):
+        """
+        Location of center of pressure, nondimensional.
+        """
+        aoa = aoa/180*np.pi
+
+        m = np.abs(self.c[0]) # Modulus of c1
+        delta = np.angle(self.c[0]) # Argument of c1
+
+        b_squared = np.abs(self.a[0]) # Modulus of a1
+        gamma_a1 = np.angle(self.a[0]) # Half argument of a1
+
+        hm = b_squared*np.sin(2*(aoa+gamma_a1))/(2*np.exp(self.psi0)*np.sin(aoa-self.eta_t))
+
+        return (m*np.cos(delta) + hm*np.cos(aoa))/self.chord
+
 
     def inverseJoukowsky(self, z1):
         """
@@ -153,7 +194,7 @@ class foil():
         """
         # Circle discretization
         nPoints = 100
-        phi = np.linspace(0, 2*np.pi, nPoints, endpoint = True)
+        phi = np.linspace(0, 2*np.pi, nPoints, endpoint = False)
         delPhi = phi[1] - phi[0] # Step size
 
         res = 1 # Initial residual
@@ -164,79 +205,20 @@ class foil():
         while res > resTol:
             # Evaluation of integral (VIII) from reference 1.
             # using the method presented in the appendix.
-            for i in range(nPoints-1):
-                for j in range(nPoints-1):
+            for i in range(nPoints):
+                for j in range(nPoints):
                     if i==j:
-                        etaNew[i] += 2 * delPhi * derivative(self.psi, self.theta, phi[i]-etaOld[i], 1) * (1 - derivative(etaOld, phi, phi[i], 1))
-                        #etaNew[i] += 2 * delPhi * self.dPsi(phi[i]-etaOld[i], 1)
+                        etaNew[i] += 2 * delPhi * derivative(self.psi, self.theta, phi[i]-etaOld[i], 1) *\
+                                                            (1 - derivative(etaOld, phi, phi[i], 1))
                     else:
                         etaNew[i] += 2 * interpolate(self.psi, self.theta, phi[j]-etaOld[j]) * \
                                 np.log(np.sin(0.5*(phi[j] + 0.5*delPhi - phi[i]))/np.sin(0.5*(phi[j] - 0.5*delPhi - phi[i])))
-                        #etaNew[i] += 2 * self.fPsi(phi[j]-etaOld[j]) * \
-                        #        np.log(np.sin(0.5*(phi[j] + 0.5*delPhi - phi[i]))/np.sin(0.5*(phi[j] - 0.5*delPhi - phi[i])))
+
                 etaNew[i] *= -1/(2*np.pi)
 
             res = np.amax(etaNew - etaOld)
             etaOld = etaNew
-
         return phi, etaNew
-
-    def fPsi(self, arg):
-        """
-        Interpolating function
-        psi = psi(argument)
-        """
-        # Normalization of argument
-        if arg >= 2*np.pi:
-            arg -= 2*np.pi
-        elif arg < 0:
-            arg += 2*np.pi
-
-        # Index finding
-        if arg > theta[-1] or arg < theta[0]:
-            f = (arg - theta[-1])/(theta[0] + 2*np.pi - theta[-1])
-            return (1 - f)*psi[-1] + f*psi[0]
-        else:
-            i = 0
-            while np.round(arg, decimals = 6) > np.round(theta[i], decimals = 6):
-                i += 1
-                if i == len(theta):
-                    break
-
-            f = (arg - theta[i-1])/(theta[i] - theta[i-1])
-            return (1 - f)*psi[i-1] + f*psi[i]
-
-    def dPsi(self, arg, order):
-        """
-        n-th order derivative of psi with respect to argument
-        dpsi^(order) / darg
-        """
-
-        # Concatenating to allow periodicity
-        theta = np.concatenate((self.theta, self.theta + 2*np.pi))
-        psi = np.concatenate((self.psi, self.psi))
-
-        # Normalization of argument
-        if arg >= 2*np.pi:
-            arg -= 2*np.pi
-        elif arg < 0:
-            arg += 2*np.pi
-
-        # Index finding
-        i = 0
-        while np.round(arg, decimals = 6) > np.round(theta[i], decimals = 6):
-            i += 1
-
-        if abs(theta[i]-arg) > abs(theta[i-1]-arg):
-            i -= 1
-
-        if order == 0:
-            return psi[i]
-
-        else:
-            dPsi2 = self.dPsi(theta[i+1], order-1)
-            dPsi1 = self.dPsi(theta[i-1], order-1)
-            return (dPsi2 - dPsi1)/(theta[i+1]-theta[i-1])
 
     def plot(self):
         """
@@ -274,27 +256,29 @@ def getRadius(x1, y1, x2, y2, x3, y3):
 def interpolate(f, t, a):
     """
     Interpolating function
-    f = f(t) in t = a
+    f = f(t) in t = a where:
+        t - angle array covering the unit circle without repeated first value
+        f - array of function values corresponding to t
     """
-    # Normalization of aument
+    # Normalization of argument a
     a = redArg(a)
 
-    # Index finding
+    if a < t[0]:
+        a += 2*np.pi
+
     if a > t[-1]:
         frac = (a - t[-1])/(t[0] + 2*np.pi - t[-1])
         return (1 - frac)*f[-1] + frac*(f[0])
-    elif a < t[0]:
-        frac = (a + 2*np.pi - t[-1])/(t[0] + 2*np.pi - t[-1])
-        return (1 - frac)*f[-1] + frac*(f[0])
+
     else:
         i = 0
         while np.round(a, decimals = 6) > np.round(t[i], decimals = 6):
             i += 1
             if i == len(t):
                 break
-
         frac = (a - t[i-1])/(t[i] - t[i-1])
         return (1 - frac)*f[i-1] + frac*f[i]
+
 
 def derivative(f, t, a, n):
     """
@@ -342,5 +326,5 @@ def redArg(a):
         a += 2*np.pi
     return a
 
-test = foil('clarky.txt')
-print(test.c1)
+
+test = foil("clarky.txt")
