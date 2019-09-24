@@ -49,19 +49,93 @@ class foil():
         self.z1 = self.z1 - self.z1[0].real + 2
         self.z1[0] = 2 + 0*1j
 
+        # Chord length in the z1 plane
         self.chord = 2 - self.z1[self.LEindex].real
 
-        """ z2 - pseudocircle complex plane """
-        self.z2, self.psi, self.theta =  self.inverseJoukowsky(self.z1)
+        """ Inverse Joukowsky mapping """
+        z2 = np.empty(len(self.z1), dtype = complex)
+        z2[0] = 1 + 0*1j # Trailing edge
 
-        """Theodorsen mapping"""
-        self.phi, self.eta = self.theodorsen(0.001)
+        z2_1 = self.z1[1]/2 + ((self.z1[1]/2)**2 - 1)**0.5
+        z2_2 = self.z1[1]/2 - ((self.z1[1]/2)**2 - 1)**0.5
+
+        if z2_1.imag > 0:
+            z2[1] = z2_1
+        else:
+            z2[1] = z2_2
+
+        for i in range(2, len(z2)):
+            z2_1 = self.z1[i]/2 + ((self.z1[i]/2)**2 - 1)**0.5
+            z2_2 = self.z1[i]/2 - ((self.z1[i]/2)**2 - 1)**0.5
+
+            v3 = z2[i-1] - z2[i-2]
+            v1 = z2_1 - z2[i-1]
+            v2 = z2_2 - z2[i-1]
+
+            cos1 = (v1.real*v3.real + v1.imag*v3.imag)/np.abs(v1)/np.abs(v3)
+            cos2 = (v2.real*v3.real + v2.imag*v3.imag)/np.abs(v2)/np.abs(v3)
+
+            if cos1 > cos2:
+                z2[i] = z2_1
+            else:
+                z2[i] = z2_2
+
+        # Psi and theta arrays are constructed
+        # so that the value of psi can be interpolated.
+        psi = np.empty(len(z2))
+        theta = np.empty(len(z2))
+        for i in range(len(z2)):
+            psi[i] = np.log(np.abs(z2[i]))
+            if np.angle(z2[i]) < 0:
+                theta[i] = np.angle(z2[i]) + 2*np.pi
+            else:
+                theta[i] = np.angle(z2[i])
+
+        self.z2 = z2
+        self.psi = psi
+        self.theta = theta
+
+        """ Theodorsen mapping """
+
+        # Discretization
+        nPoints = 200
+        phi = np.linspace(0, 2*np.pi, nPoints, endpoint = False)
+        delPhi = phi[1] - phi[0] # Step size
+
+        # Residual tolerance
+        resTol = 0.001
+        res = 1 # Initial residual
+
+        etaOld = np.zeros(nPoints)
+        etaNew = np.zeros(nPoints)
+
+        while res > resTol:
+            # Evaluation of integral (VIII) from reference 1.
+            # using the method presented in the appendix.
+            for i in range(nPoints):
+                for j in range(nPoints):
+                    if i==j:
+                        etaNew[i] += 2 * delPhi * derivative(self.psi, self.theta, phi[i]-etaOld[i], 1) *\
+                                                            (1 - derivative(etaOld, phi, phi[i], 1))
+                    else:
+                        etaNew[i] += 2 * interpolate(self.psi, self.theta, phi[j]-etaOld[j]) * \
+                                np.log(np.sin(0.5*(phi[j] + 0.5*delPhi - phi[i]))/np.sin(0.5*(phi[j] - 0.5*delPhi - phi[i])))
+
+                etaNew[i] *= -1/(2*np.pi)
+
+            res = np.amax(etaNew - etaOld)
+            etaOld = etaNew
+
+        self.phi = phi
+        self.eta = etaNew
+
 
         # Psi, theta, z2 and z1 arrays are recomputed to correspond
         # element-wise to the phi and eta arrays.
         self.psi = np.array([interpolate(self.psi, self.theta, self.phi[i] - self.eta[i]) for i in range(len(self.phi))])
         self.theta = self.phi - self.eta
         self.z2 = np.exp(self.psi)*(np.cos(self.theta)+1j*np.sin(self.theta))
+        self.z1 = self.z2 + 1/self.z2
 
         # Phi and Psi arrays with repeated first values to close the unit circle
         # for integration using trapezoidal rule.
@@ -73,7 +147,9 @@ class foil():
         self.psi0 = 1/2/np.pi*trapz(psi_temp, phi_temp)
 
         # Mapping coefficients of the combined Theodorsen-Joukowsky map
-        nCoeffs = 10 # Number of c coefficients
+        # NOT CORRECTLY COMPUTED!
+
+        nCoeffs = 20 # Number of coefficients a
         self.c = np.empty(nCoeffs + 1, dtype = complex)
         self.a = np.empty(nCoeffs, dtype = complex)
         k      = np.zeros(nCoeffs + 2, dtype = complex)
@@ -91,7 +167,6 @@ class foil():
 
         # Testing the combined mapping
         z3_test = np.exp(self.psi0)*(np.cos(self.phi)+1j*np.sin(self.phi))
-
         z1_test = self.c[0] + z3_test
         for n in range(nCoeffs):
             z1_test +=  self.a[n]/(z3_test)**(n+1)
@@ -107,23 +182,23 @@ class foil():
         # Velocity factor array at all points of theta array
         self.F = np.array([(1+derivative(self.eta,self.phi,self.phi[i],1))*np.exp(self.psi0)/\
                             np.sqrt((self.z1[i].imag/2/np.sin(self.theta[i]))**2 + (np.sin(self.theta[i]))**2)/\
-                            1 + (derivative(self.psi,self.theta,self.theta[i],1))**2])
+                            1 + (derivative(self.psi,self.theta,self.theta[i],1))**2 for i in range(len(self.theta))])
 
         # eta_t - angle of attack at zero lift -> phi(theta=0)
         self.eta_t = interpolate(self.eta, self.theta, 0) # + theta_t = 0
 
-
-
     def cl(self, aoa):
         """
         Lift coefficient at specified AoA
+        Reference: [2], p.194, expression (45)
         """
         aoa = aoa/180*np.pi
         return 8/self.chord*np.pi*np.exp(self.psi0)*np.sin(aoa-self.eta_t)
 
     def CoP(self, aoa):
         """
-        Location of center of pressure, nondimensional.
+        Nondimensional location of center of pressure at specified AoA
+        Reference: [2], p.194, expression (48)
         """
         aoa = aoa/180*np.pi
 
@@ -193,7 +268,7 @@ class foil():
         within specified numerical precision (residual tolerance).
         """
         # Circle discretization
-        nPoints = 100
+        nPoints = 200
         phi = np.linspace(0, 2*np.pi, nPoints, endpoint = False)
         delPhi = phi[1] - phi[0] # Step size
 
@@ -287,10 +362,14 @@ def derivative(f, t, a, n):
     # Normalization of argument a
     a = redArg(a)
 
-    # Index finding
-    if a > t[-1] or a < t[0]:
-        frac = (a - t[-1])/(t[0] + 2*np.pi - t[-1])
-        return (1 - frac)*f[-1] + frac*f[0]
+    if a < t[0]:
+        a += 2*np.pi
+
+    if a > t[-1]:
+        i = 0
+        if abs(t[0]+2*np.pi-a) > abs(t[-1]-a):
+            i = -1
+
     else:
         i = 0
         while np.round(a, decimals = 6) > np.round(t[i], decimals = 6):
@@ -298,8 +377,8 @@ def derivative(f, t, a, n):
             if i == len(t):
                 break
 
-    if abs(t[i]-a) > abs(t[i-1]-a):
-        i -= 1
+        if abs(t[i]-a) > abs(t[i-1]-a):
+            i -= 1
 
     if n == 0:
         return f[i]
@@ -328,3 +407,4 @@ def redArg(a):
 
 
 test = foil("clarky.txt")
+test.plot()
