@@ -25,7 +25,6 @@ class foil():
 
         datPoints = datPoints.split('\n')
         datPoints.pop(0) # remove header line
-        datPoints.pop(-1) # remove whitespace
         datPoints.pop(-1) # remove repeated trailing edge
 
         """ z1 - original airfoil complex plane """
@@ -35,13 +34,12 @@ class foil():
             self.z1[i] = float(coordinates[0]) + float(coordinates[1])*1j
 
 
-        LEindex = 1
-        while self.z1[LEindex].imag > 0:
-            LEindex += 1
+        LEindex = int(np.where(self.z1.real == np.amin(self.z1.real))[0])
 
         LEradius = getRadius(self.z1[LEindex-1].real, self.z1[LEindex-1].imag, \
                                   self.z1[LEindex].real, self.z1[LEindex].imag, \
                                   self.z1[LEindex+1].real, self.z1[LEindex+1].imag)
+
 
         self.LEindex = LEindex
 
@@ -147,13 +145,14 @@ class foil():
         self.psi0 = 1/2/np.pi*trapz(psi_temp, phi_temp)
 
         # Mapping coefficients of the combined Theodorsen-Joukowsky map
-        # NOT CORRECTLY COMPUTED!
 
         nCoeffs = 20 # Number of coefficients a
         self.c = np.empty(nCoeffs + 1, dtype = complex)
         self.a = np.empty(nCoeffs, dtype = complex)
         k      = np.zeros(nCoeffs + 2, dtype = complex)
         k[0]   = 1 # k_0 = 1
+        h      = np.zeros(nCoeffs + 2, dtype = complex)
+        h[0]   = 1 # k_0 = 1
 
         for n in range(nCoeffs+1):
             A = np.exp(self.psi0)**(n+1)/np.pi*trapz(np.array([psi_temp[i] * np.cos((n+1)*phi_temp[i]) for i in range(len(phi_temp))]), phi_temp)
@@ -161,28 +160,29 @@ class foil():
             self.c[n] = A + B*1j
 
             k[n+1] = sum([k[n-o]*self.c[o]*(o+1)/(n+1) for o in range(n+1)])
+            h[n+1] = sum([-h[n-o]*self.c[o]*(o+1)/(n+1) for o in range(n+1)])
 
         for n in range(nCoeffs):
-            self.a[n] = k[n+2] - k[n]
+            self.a[n] = k[n+2] + h[n]
 
         # Testing the combined mapping
-        z3_test = np.exp(self.psi0)*(np.cos(self.phi)+1j*np.sin(self.phi))
-        z1_test = self.c[0] + z3_test
-        for n in range(nCoeffs):
-            z1_test +=  self.a[n]/(z3_test)**(n+1)
+        #z3_test = np.exp(self.psi0)*(np.cos(self.phi)+1j*np.sin(self.phi))
+        #z1_test = self.c[0] + z3_test
+        #for n in range(nCoeffs):
+        #    z1_test +=  self.a[n]/(z3_test)**(n+1)
 
-        plt.figure()
-        plt.plot(np.append(z1_test.real,z1_test[0].real), np.append(z1_test.imag,z1_test[0].imag), 'b')
-        plt.plot(np.append(z3_test.real,z3_test[0].real), np.append(z3_test.imag,z3_test[0].imag), 'r')
-        plt.gca().set_aspect('equal')
-        plt.grid('True')
-        plt.show()
+        #plt.figure()
+        #plt.plot(np.append(z1_test.real,z1_test[0].real), np.append(z1_test.imag,z1_test[0].imag), 'b')
+        #plt.plot(np.append(z3_test.real,z3_test[0].real), np.append(z3_test.imag,z3_test[0].imag), 'r')
+        #plt.gca().set_aspect('equal')
+        #plt.grid('True')
+        #plt.show()
 
 
         # Velocity factor array at all points of theta array
-        self.F = np.array([(1+derivative(self.eta,self.phi,self.phi[i],1))*np.exp(self.psi0)/\
-                            np.sqrt((self.z1[i].imag/2/np.sin(self.theta[i]))**2 + (np.sin(self.theta[i]))**2)/\
-                            1 + (derivative(self.psi,self.theta,self.theta[i],1))**2 for i in range(len(self.theta))])
+        #self.F = np.array([(1+derivative(self.eta,self.phi,self.phi[i],1))*np.exp(self.psi0)/\
+        #                    np.sqrt((self.z1[i].imag/2/np.sin(self.theta[i]))**2 + (np.sin(self.theta[i]))**2)/\
+        #                    1 + (derivative(self.psi,self.theta,self.theta[i],1))**2 for i in range(len(self.theta))])
 
         # eta_t - angle of attack at zero lift -> phi(theta=0)
         self.eta_t = interpolate(self.eta, self.theta, 0) # + theta_t = 0
@@ -210,7 +210,7 @@ class foil():
 
         hm = b_squared*np.sin(2*(aoa+gamma_a1))/(2*np.exp(self.psi0)*np.sin(aoa-self.eta_t))
 
-        return (m*np.cos(delta) + hm*np.cos(aoa))/self.chord
+        return -(m*np.cos(np.pi-delta+aoa) + hm)/np.cos(aoa)/self.chord
 
 
     def inverseJoukowsky(self, z1):
@@ -326,7 +326,10 @@ def getRadius(x1, y1, x2, y2, x3, y3):
     C = (x1**2+y1**2)*(x2-x3) + (x2**2+y2**2)*(x3-x1) + (x3**2+y3**2)*(x1-x2)
     D = (x1**2+y1**2)*(x3*y2-x2*y3) + (x2**2+y2**2)*(x1*y3-x3*y1) + (x3**2+y3**2)*(x2*y1-x1*y2)
 
-    return sqrt((B**2+C**2-4*A*D)/(4*A**2))
+    if A != 0:
+        return sqrt((B**2+C**2-4*A*D)/(4*A**2))
+    else:
+        return 0
 
 def interpolate(f, t, a):
     """
@@ -406,5 +409,5 @@ def redArg(a):
     return a
 
 
-test = foil("clarky.txt")
-test.plot()
+test = foil("flatplate.txt")
+print(test.CoP(2))
