@@ -26,7 +26,7 @@ After the mapping is determined, you have at your disposal the following methods
 
 ## DAT File Rules
 
-**Selig format**: 
+**Selig format** 
 
 The points run from the trailing edge across the upper surface of the airfoil
 to the leading edge and back across the lower surface. 
