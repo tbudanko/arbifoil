@@ -1,5 +1,7 @@
 """
       ARBIFOIL
+Arbitrary airfoil analysis using
+Theodorsen's conformal mapping method
 
 Author: Toma Budanko
 """
@@ -10,13 +12,22 @@ from matplotlib import pyplot as plt
 from math import *
 
 class foil():
+    """
+    Foil computational object.
 
+    References:
+    [1] Theodorsen, T.: Theory of Wing Sections of Arbitrary Shape, NACA, 1931.
+    [2] Theodorsen, T., Garrick I.E.: General Potential Theory of Arbitrary
+        Wing Sections, NACA TR-452, 1934.
+    [3] Karamcheti, K.: Principles of ideal-fluid aerodynamics,
+        R. E. Krieger Publishing Company, 1980.
+    """
     def __init__(self, datFileName):
         """
-        Foil initialization
+        Foil initialization function:
         - .dat file read into z1 complex array
         - inverse Joukowsky z1 -> z2
-        - theodorsen mapping
+        - Theodorsen mapping iteratively determined
         """
         # Read .dat file
         datFile = open(datFileName, 'r')
@@ -24,8 +35,10 @@ class foil():
         datFile.close()
 
         datPoints = datPoints.split('\n')
-        datPoints.pop(0) # remove header line
-        datPoints.pop(-1) # remove repeated trailing edge
+        datPoints.pop(0) # Remove header
+        datPoints = list(filter(None, datPoints))
+        datPoints.pop(-1) # Remove repeated trailing edge
+
 
         """ z1 - original airfoil complex plane """
         self.z1 =  np.empty(len(datPoints), dtype = complex)
@@ -45,14 +58,16 @@ class foil():
 
         self.z1 = 4/(1-0.5*LEradius)*self.z1
         self.z1 = self.z1 - self.z1[0].real + 2
-        self.z1[0] = 2 + 0*1j
+        #self.z1[0] = 2 + 0*1j
+
 
         # Chord length in the z1 plane
         self.chord = 2 - self.z1[self.LEindex].real
 
         """ Inverse Joukowsky mapping """
         z2 = np.empty(len(self.z1), dtype = complex)
-        z2[0] = 1 + 0*1j # Trailing edge
+        #z2[0] = 1 + 0*1j # Trailing edge
+        z2[0] = self.z1[0]/2 + ((self.z1[0]/2)**2 - 1)**0.5
 
         z2_1 = self.z1[1]/2 + ((self.z1[1]/2)**2 - 1)**0.5
         z2_2 = self.z1[1]/2 - ((self.z1[1]/2)**2 - 1)**0.5
@@ -96,41 +111,54 @@ class foil():
         """ Theodorsen mapping """
 
         # Discretization
-        nPoints = 200
-        phi = np.linspace(0, 2*np.pi, nPoints, endpoint = False)
+        self.nPoints = 50
+        phi = np.linspace(0, 2*np.pi, self.nPoints, endpoint = False)
         delPhi = phi[1] - phi[0] # Step size
 
         # Residual tolerance
         resTol = 0.001
         res = 1 # Initial residual
 
-        etaOld = np.zeros(nPoints)
-        etaNew = np.zeros(nPoints)
+        print('Theodorsen mapping\nAirfoil: {}\nDiscretization: {} points\nResidual tolerance: {} rad\n'.format(datFileName, self.nPoints, resTol))
 
+        # Evaluation of integral (VIII) from reference [1].
+        # using the method presented in the appendix.
+        etaNew = np.zeros(self.nPoints)
+        etaOld = np.zeros(self.nPoints)
+
+        print('Iteration\tResidual')
+
+        iter=1
         while res > resTol:
-            # Evaluation of integral (VIII) from reference 1.
-            # using the method presented in the appendix.
-            for i in range(nPoints):
-                for j in range(nPoints):
+            for i in range(self.nPoints):
+                etaCur = 0
+                for j in range(self.nPoints):
                     if i==j:
-                        etaNew[i] += 2 * delPhi * derivative(self.psi, self.theta, phi[i]-etaOld[i], 1) *\
+                        etaCur += 2 * delPhi * derivative(self.psi, self.theta, phi[i]-etaOld[i], 1) *\
                                                             (1 - derivative(etaOld, phi, phi[i], 1))
                     else:
-                        etaNew[i] += 2 * interpolate(self.psi, self.theta, phi[j]-etaOld[j]) * \
+                        etaCur += 2 * interpolate(self.psi, self.theta, phi[j]-etaOld[j]) * \
                                 np.log(np.sin(0.5*(phi[j] + 0.5*delPhi - phi[i]))/np.sin(0.5*(phi[j] - 0.5*delPhi - phi[i])))
 
-                etaNew[i] *= -1/(2*np.pi)
+                etaCur *= -1/(2*np.pi)
+                etaNew[i] = etaCur
 
-            res = np.amax(etaNew - etaOld)
-            etaOld = etaNew
+            res = np.amax(np.abs(etaNew - etaOld))
+
+            for i in range(self.nPoints):
+                etaOld[i] = etaNew[i]
+
+            print('{}\t{}'.format(iter, res))
+            iter += 1
+
 
         self.phi = phi
         self.eta = etaNew
-
+        print('Calculation done.')
 
         # Psi, theta, z2 and z1 arrays are recomputed to correspond
         # element-wise to the phi and eta arrays.
-        self.psi = np.array([interpolate(self.psi, self.theta, self.phi[i] - self.eta[i]) for i in range(len(self.phi))])
+        self.psi = np.array([interpolate(self.psi, self.theta, self.phi[i] - self.eta[i]) for i in range(self.nPoints)])
         self.theta = self.phi - self.eta
         self.z2 = np.exp(self.psi)*(np.cos(self.theta)+1j*np.sin(self.theta))
         self.z1 = self.z2 + 1/self.z2
@@ -140,21 +168,22 @@ class foil():
         phi_temp = np.append(self.phi, self.phi[0]+2*np.pi)
         psi_temp = np.append(self.psi, self.psi[0])
 
-
         # Average exponential scaling factor
         self.psi0 = 1/2/np.pi*trapz(psi_temp, phi_temp)
 
-        # Mapping coefficients of the combined Theodorsen-Joukowsky map
+        # z3 array (circle plane)
+        self.z3 = exp(self.psi0)*(np.cos(self.phi) + 1j*np.sin(self.phi))
 
-        nCoeffs = 20 # Number of coefficients a
-        self.c = np.empty(nCoeffs + 1, dtype = complex)
-        self.a = np.empty(nCoeffs, dtype = complex)
-        k      = np.zeros(nCoeffs + 2, dtype = complex)
+        # Mapping coefficients of the combined Theodorsen-Joukowsky map
+        self.nCoeffs = 100 # Number of coefficients a
+        self.c = np.empty(self.nCoeffs + 1, dtype = complex)
+        self.a = np.empty(self.nCoeffs, dtype = complex)
+        k      = np.zeros(self.nCoeffs + 2, dtype = complex)
         k[0]   = 1 # k_0 = 1
-        h      = np.zeros(nCoeffs + 2, dtype = complex)
+        h      = np.zeros(self.nCoeffs + 2, dtype = complex)
         h[0]   = 1 # k_0 = 1
 
-        for n in range(nCoeffs+1):
+        for n in range(self.nCoeffs+1):
             A = np.exp(self.psi0)**(n+1)/np.pi*trapz(np.array([psi_temp[i] * np.cos((n+1)*phi_temp[i]) for i in range(len(phi_temp))]), phi_temp)
             B = np.exp(self.psi0)**(n+1)/np.pi*trapz(np.array([psi_temp[i] * np.sin((n+1)*phi_temp[i]) for i in range(len(phi_temp))]), phi_temp)
             self.c[n] = A + B*1j
@@ -162,38 +191,61 @@ class foil():
             k[n+1] = sum([k[n-o]*self.c[o]*(o+1)/(n+1) for o in range(n+1)])
             h[n+1] = sum([-h[n-o]*self.c[o]*(o+1)/(n+1) for o in range(n+1)])
 
-        for n in range(nCoeffs):
+        for n in range(self.nCoeffs):
             self.a[n] = k[n+2] + h[n]
-
-        # Testing the combined mapping
-        #z3_test = np.exp(self.psi0)*(np.cos(self.phi)+1j*np.sin(self.phi))
-        #z1_test = self.c[0] + z3_test
-        #for n in range(nCoeffs):
-        #    z1_test +=  self.a[n]/(z3_test)**(n+1)
-
-        #plt.figure()
-        #plt.plot(np.append(z1_test.real,z1_test[0].real), np.append(z1_test.imag,z1_test[0].imag), 'b')
-        #plt.plot(np.append(z3_test.real,z3_test[0].real), np.append(z3_test.imag,z3_test[0].imag), 'r')
-        #plt.gca().set_aspect('equal')
-        #plt.grid('True')
-        #plt.show()
-
-
-        # Velocity factor array at all points of theta array
-        #self.F = np.array([(1+derivative(self.eta,self.phi,self.phi[i],1))*np.exp(self.psi0)/\
-        #                    np.sqrt((self.z1[i].imag/2/np.sin(self.theta[i]))**2 + (np.sin(self.theta[i]))**2)/\
-        #                    1 + (derivative(self.psi,self.theta,self.theta[i],1))**2 for i in range(len(self.theta))])
 
         # eta_t - angle of attack at zero lift -> phi(theta=0)
         self.eta_t = interpolate(self.eta, self.theta, 0) # + theta_t = 0
 
-    def cl(self, aoa):
+        # Surface derivative of z1 wrt. z3
+        # Used for surface velocity and pressure coefficient calculation.
+        self.dz1dz3_1 = np.empty(self.nPoints)
+        for i in range(self.nPoints):
+            self.dz1dz3_1[i] = abs((self.z2[i]**2-1)/(self.z2[i]*self.z3[i])*\
+                                (1-1j*derivative(self.psi, self.theta, self.theta[i], 1))/\
+                                (1+derivative(self.eta, self.theta, self.theta[i], 1)))
+
+        #self.dz1dz3_2 = np.empty(self.nPoints)
+        #for i in range(self.nPoints):
+        #    self.dz1dz3_2[i] = sqrt((self.z1[i].imag**2*(1/tan(self.theta[i]))**2+\
+        #                        self.z1[i].real**2*tan(self.theta[i])**2)*(1+derivative(self.phi,self.theta,self.theta[i],1)**2))/\
+        #                        exp(self.psi0)/(1+derivative(self.eta,self.theta,self.theta[i],1))
+
+        #self.dz1dz3_3 = np.ones(self.nPoints)
+        #for n in range(self.nCoeffs):
+        #    self.dz1dz3_3 += np.abs(-(n+1)*self.a[n]/self.z3**(n+2))
+
+    def testMap(self):
+        """
+        Visually test the combined mapping.
+        """
+        z3_test = np.exp(self.psi0)*(np.cos(self.phi)+1j*np.sin(self.phi))
+        z1_test = self.c[0] + z3_test
+        for n in range(self.nCoeffs):
+            z1_test +=  self.a[n]/(z3_test)**(n+1)
+
+        plt.figure()
+        plt.plot(np.append(z1_test.real,z1_test[0].real), np.append(z1_test.imag,z1_test[0].imag), 'b')
+        plt.plot(np.append(self.z1.real,self.z1[0].real), np.append(self.z1.imag,self.z1[0].imag), 'r')
+        plt.plot(self.z3.real, self.z3.imag)
+        plt.gca().set_aspect('equal')
+        plt.grid('True')
+        plt.show()
+
+        plt.figure()
+        plt.plot(self.a)
+        plt.show()
+
+    def C_L(self, aoa):
         """
         Lift coefficient at specified AoA
         Reference: [2], p.194, expression (45)
         """
         aoa = aoa/180*np.pi
-        return 8/self.chord*np.pi*np.exp(self.psi0)*np.sin(aoa-self.eta_t)
+
+        Gamma = 4*np.pi*sin(aoa-self.eta_t)
+
+        return 2*Gamma*np.exp(self.psi0)/self.chord
 
     def CoP(self, aoa):
         """
@@ -208,92 +260,95 @@ class foil():
         b_squared = np.abs(self.a[0]) # Modulus of a1
         gamma_a1 = np.angle(self.a[0]) # Half argument of a1
 
-        hm = b_squared*np.sin(2*(aoa+gamma_a1))/(2*np.exp(self.psi0)*np.sin(aoa-self.eta_t))
+        hm = -b_squared*sin(2*(-aoa+gamma_a1))/(2*exp(self.psi0)*sin(aoa-self.eta_t))
 
-        return -(m*np.cos(np.pi-delta+aoa) + hm)/np.cos(aoa)/self.chord
+        return 0.5-(m*cos(delta-aoa) + hm)/cos(aoa)/self.chord
 
-
-    def inverseJoukowsky(self, z1):
+    def C_p(self, aoa):
         """
-        Inverse Joukowsky mapping
-        Two inverses exist, one is chosen arbitrarily and adhered to
-        by smoothly completing the pseudocircle.
+        Pressure coefficient along top and bottom airfoil surfaces.
+        Reference: [2], p.192, expression(40)
         """
+        aoa = aoa/180*np.pi
 
-        z2 = np.empty(len(z1), dtype = complex)
-        z2[0] = 1 + 0*1j # Trailing edge
+        cp = np.empty(self.nPoints)
+        v = 0
+        for i in range(self.nPoints):
+            v = abs(cos(aoa)-1j*sin(aoa)-cos(aoa-2*self.phi[i])+1j*sin(aoa-2*self.phi[i])+2*1j*sin(aoa-self.eta_t)*(cos(self.phi[i])-1j*sin(self.phi[i])))/self.dz1dz3_2[i]
+            cp[i] = 1 - v**2
 
-        z2_1 = z1[1]/2 + ((z1[1]/2)**2 - 1)**0.5
-        z2_2 = z1[1]/2 - ((z1[1]/2)**2 - 1)**0.5
+        # x coordinate from LE towards TE along Chord
+        # x(LE) = 0; x(TE) = 1
+        x = np.real(self.z1[:])
+        xmin = np.amin(x)
+        LEindex = int(np.where(x == xmin)[0])
+        #x += abs(xmin)
+        #x /= self.chord
 
-        if z2_1.imag > 0:
-            z2[1] = z2_1
-        else:
-            z2[1] = z2_2
+        # Split into upper and lower airfoil surfaces
+        xUpper = np.flip(x[0:LEindex])
+        xLower = x[LEindex:-1]
 
-        for i in range(2, len(z2)):
-            z2_1 = z1[i]/2 + ((z1[i]/2)**2 - 1)**0.5
-            z2_2 = z1[i]/2 - ((z1[i]/2)**2 - 1)**0.5
+        cpUpper = np.flip(cp[0:LEindex])
+        cpLower = cp[LEindex:-1]
 
-            v3 = z2[i-1] - z2[i-2]
-            v1 = z2_1 - z2[i-1]
-            v2 = z2_2 - z2[i-1]
+        # Plot
+        plt.figure()
+        #plt.plot(xUpper, cpUpper, 'b')
+        #plt.plot(xLower, cpLower, 'r')
+        plt.plot(np.append(x,x[0]), np.append(cp,cp[0]), 'b')
+        plt.gca().invert_yaxis()
+        plt.grid('True')
+        plt.show()
 
-            cos1 = (v1.real*v3.real + v1.imag*v3.imag)/np.abs(v1)/np.abs(v3)
-            cos2 = (v2.real*v3.real + v2.imag*v3.imag)/np.abs(v2)/np.abs(v3)
+        return xUpper, cpUpper, xLower, cpLower
 
-            if cos1 > cos2:
-                z2[i] = z2_1
-            else:
-                z2[i] = z2_2
-
-        # Psi and theta arrays are constructed
-        # so that the value of psi can be interpolated.
-        psi = np.empty(len(z2))
-        theta = np.empty(len(z2))
-        for i in range(len(z2)):
-            psi[i] = np.log(np.abs(z2[i]))
-            if np.angle(z2[i]) < 0:
-                theta[i] = np.angle(z2[i]) + 2*np.pi
-            else:
-                theta[i] = np.angle(z2[i])
-
-        return z2, psi, theta
-
-    def theodorsen(self, resTol):
+    def C_M_LE(self, aoa):
         """
-        Theodorsen mapping
-        Takes pseudocircle and returns:
-        - eta = eta(phi)
-        within specified numerical precision (residual tolerance).
+        Moment coefficient about leading edge at specified AoA.
+        Convention is respected with respect to sign, where a positive Moment
+        induces a pitch up.
+
+        Reference: [2], p.194, expression (46)
         """
-        # Circle discretization
-        nPoints = 200
-        phi = np.linspace(0, 2*np.pi, nPoints, endpoint = False)
-        delPhi = phi[1] - phi[0] # Step size
+        aoa = aoa/180*np.pi
 
-        res = 1 # Initial residual
+        m = np.abs(self.c[0]) # Modulus of c1
+        delta = np.angle(self.c[0]) # Argument of c1
 
-        etaOld = np.zeros(nPoints)
-        etaNew = np.zeros(nPoints)
+        b_squared = np.abs(self.a[0]) # Modulus of a1
+        gamma_a1 = np.angle(self.a[0]) # Half argument of a1
 
-        while res > resTol:
-            # Evaluation of integral (VIII) from reference 1.
-            # using the method presented in the appendix.
-            for i in range(nPoints):
-                for j in range(nPoints):
-                    if i==j:
-                        etaNew[i] += 2 * delPhi * derivative(self.psi, self.theta, phi[i]-etaOld[i], 1) *\
-                                                            (1 - derivative(etaOld, phi, phi[i], 1))
-                    else:
-                        etaNew[i] += 2 * interpolate(self.psi, self.theta, phi[j]-etaOld[j]) * \
-                                np.log(np.sin(0.5*(phi[j] + 0.5*delPhi - phi[i]))/np.sin(0.5*(phi[j] - 0.5*delPhi - phi[i])))
+        return 4*np.pi*b_squared*sin(2*(aoa + gamma_a1))
 
-                etaNew[i] *= -1/(2*np.pi)
+    def AC(self):
+        """
+        Coordinates of the airfoil aerodynamic center.
 
-            res = np.amax(etaNew - etaOld)
-            etaOld = etaNew
-        return phi, etaNew
+        Reference: [2], p.195
+        """
+        m = np.abs(self.c[0]) # Modulus of c1
+        delta = np.angle(self.c[0]) # Argument of c1
+
+        b_squared = np.abs(self.a[0]) # Modulus of a1
+        gamma_a1 = np.angle(self.a[0]) # Half argument of a1
+
+        x = b_squared/exp(self.psi0)*cos(2*gamma_a1 - self.eta_t)
+        y = b_squared/exp(self.psi0)*sin(2*gamma_a1 - self.eta_t)
+
+        return x/self.chord, y/self.chord
+
+    def C_M_AC(self):
+        """
+        Moment coefficient about aerodynamic center.
+        Pitch up moment is positive.
+
+        Reference: [2], p.195, expression (51)
+        """
+        b_squared = np.abs(self.a[0]) # Modulus of a1
+        gamma_a1 = np.angle(self.a[0]) # Half argument of a1
+
+        return -4*np.pi*b_squared/(self.chord**2)*sin(2*(gamma_a1-self.eta_t))
 
     def plot(self):
         """
@@ -302,7 +357,6 @@ class foil():
 
         plt.figure()
         plt.plot(np.append(self.z1.real,self.z1[0].real), np.append(self.z1.imag,self.z1[0].imag), 'b')
-        plt.plot(np.append(self.z2.real,self.z2[0].real), np.append(self.z2.imag,self.z2[0].imag), 'r')
         plt.gca().set_aspect('equal')
         plt.grid('True')
         plt.figure()
@@ -401,7 +455,9 @@ def derivative(f, t, a, n):
             return (derivative2 - derivative1)/(t[i+1]-t[i-1])
 
 def redArg(a):
-    """Reduces argument to [0,2pi] interval"""
+    """
+    Reduces argument to [0,2pi] interval.
+    """
     if a >= 2*np.pi:
         a -= 2*np.pi
     elif a < 0:
@@ -409,5 +465,5 @@ def redArg(a):
     return a
 
 
-test = foil("flatplate.txt")
-print(test.CoP(2))
+test = foil("clarky.txt")
+test.AC()
