@@ -3,7 +3,7 @@ Airfoil analysis library
 
 _Theodorsen's potential theory of arbitrary wing sections implemented in Python 3.7._
 
-## Using Arbifoil
+###### Using Arbifoil
 Generate or otherwise obtain an airfoil .dat file in **Selig format***.
 
 Import arbifoil.py 
@@ -24,7 +24,7 @@ After the mapping is determined, you have at your disposal the following methods
 - **CoP(aoa)** - returns nondimensional center of pressure measured from the leading edge,
 - **AC()** - returns the nondimensional coordinates of the aerodynamic center.
 
-## DAT File Rules
+###### DAT File Rules
 
 **Selig format**: 
 
@@ -40,8 +40,10 @@ The x axis points towards the trailing edge.
 
 The upper surface points have positive y values, the lower surface points have negative y values.
 
-## References
+###### References
 [1] Theodorsen, T.: Theory of Wing Sections of Arbitrary Shape, NACA, 1931.
+
 [2] Theodorsen, T., Garrick I.E.: General Potential Theory of Arbitrary Wing Sections, NACA TR-452, 1934.
+
 [3] Karamcheti, K.: Principles of ideal-fluid aerodynamics, R. E. Krieger Publishing Company, 1980.
 
