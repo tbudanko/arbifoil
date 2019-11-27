@@ -175,7 +175,7 @@ class foil():
         self.z3 = exp(self.psi0)*(np.cos(self.phi) + 1j*np.sin(self.phi))
 
         # Mapping coefficients of the combined Theodorsen-Joukowsky map
-        self.nCoeffs = 100 # Number of coefficients a
+        self.nCoeffs = 10 # Number of coefficients a
         self.c = np.empty(self.nCoeffs + 1, dtype = complex)
         self.a = np.empty(self.nCoeffs, dtype = complex)
         k      = np.zeros(self.nCoeffs + 2, dtype = complex)
