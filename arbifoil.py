@@ -463,7 +463,3 @@ def redArg(a):
     elif a < 0:
         a += 2*np.pi
     return a
-
-
-test = foil("clarky.txt")
-test.AC()
